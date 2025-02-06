@@ -1,0 +1,28 @@
+# Dependencias de Node.js
+/node_modules/
+
+# Archivos de entorno
+.env
+
+# Base de datos SQLite
+scraping.db
+
+# Archivos de log
+*.log
+
+# Directorios específicos de editor
+.vscode/
+.idea/
+
+# Archivos de sistema (MacOS, Windows)
+.DS_Store
+Thumbs.db
+
+# Archivos de configuración de npm
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Archivos temporales de sistemas de construcción
+dist/
+build/
