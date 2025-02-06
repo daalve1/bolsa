@@ -185,7 +185,7 @@ async function sendEmail(recipient, newsItems) {
 //
 // FUNCIÓN PRINCIPAL
 //
-(async () => {
+module.exports = async (req, res) => {
     console.log("⏳ Iniciando scraping...");
     let newNews = [];  // Noticias nuevas (con la empresa asociada)
 
@@ -232,4 +232,4 @@ async function sendEmail(recipient, newsItems) {
     
     console.log("✅ Scraping completado.");
     process.exit(0);
-})();
+};

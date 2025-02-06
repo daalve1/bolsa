@@ -2,8 +2,10 @@
   "name": "scrapping",
   "version": "1.0.0",
   "description": "",
-  "main": "app.js",
-  "scripts": {},
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
