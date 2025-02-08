@@ -22,7 +22,7 @@ try {
 //
 // CONFIGURACIÓN DE EMPRESAS A SCRAPEAR
 // 
-// ["HENSOLDT", "DEXCOM", "PAYPAL", "MICROSOFT", "ADOBE", "PEPSI", "NOVONORDISK", "INDITEX", "NU", "HOEGH", "SOFTBANK", "MICRON", "GLOBALSTAR", "MICROSTRATEGY", "NVIDIA", "GERRESHEIMER"]
+// 
 const empresas = [
     { nombre: "HENSOLDT", url: "https://es.marketscreener.com/cotizacion/accion/HENSOLDT-AG-112902521/noticia/" },
     { nombre: "DEXCOM", url: "https://es.marketscreener.com/cotizacion/accion/DEXCOM-INC-9115/noticia/" },
@@ -39,7 +39,14 @@ const empresas = [
     { nombre: "GLOBALSTAR", url: "https://es.marketscreener.com/cotizacion/accion/GLOBALSTAR-INC-16313081/noticia/" },
     { nombre: "MICROSTRATEGY", url: "https://es.marketscreener.com/cotizacion/accion/MICROSTRATEGY-INCORPORATE-10105/noticia/" },
     { nombre: "NVIDIA", url: "https://es.marketscreener.com/cotizacion/accion/NVIDIA-CORPORATION-57355629/noticia/" },
-    { nombre: "GERRESHEIMER", url: "https://es.marketscreener.com/cotizacion/accion/GERRESHEIMER-AG-599546/noticia/" }
+    { nombre: "GERRESHEIMER", url: "https://es.marketscreener.com/cotizacion/accion/GERRESHEIMER-AG-599546/noticia/" },
+    { nombre: "PLATOALTO", url: "https://es.marketscreener.com/cotizacion/accion/PALO-ALTO-NETWORKS-INC-11067980/noticia/" },
+    { nombre: "HELLOFRESH", url: "https://es.marketscreener.com/cotizacion/accion/HELLOFRESH-SE-38533857/noticia/" },
+    { nombre: "ELF BEAUTY", url: "https://es.marketscreener.com/cotizacion/accion/ELF-BEAUTY-31370490/noticia/" },
+    { nombre: "KERING", url: "https://es.marketscreener.com/cotizacion/accion/KERING-4683/noticia/" },
+    { nombre: "BAYER", url: "https://es.marketscreener.com/cotizacion/accion/BAYER-AG-436063/noticia/" },
+    { nombre: "PUMA", url: "https://es.marketscreener.com/cotizacion/accion/PUMA-SE-436505/noticia/" },
+    { nombre: "DELL", url: "https://es.marketscreener.com/cotizacion/accion/DELL-TECHNOLOGIES-INC-50061235/noticia/" }
 ];
 
 //
