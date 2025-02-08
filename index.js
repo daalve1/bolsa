@@ -6,11 +6,16 @@ require('dotenv').config();
 //
 // CARGA DE SUSCRIPCIONES DESDE VARIABLE DE ENTORNO
 //
-let subscriptions = [];
 try {
-    subscriptions = JSON.parse(process.env.SUBSCRIPTIONS);
+    const rawSubscriptions = process.env.SUBSCRIPTIONS;
+    
+    if (!rawSubscriptions) {
+        throw new Error("La variable SUBSCRIPTIONS está vacía o no está definida.");
+    }
+
+    subscriptions = JSON.parse(rawSubscriptions);
 } catch (error) {
-    console.error("Error al parsear la variable de entorno SUBSCRIPTIONS:", error);
+    console.error("❌ Error al parsear la variable de entorno SUBSCRIPTIONS:", error.message);
     process.exit(1);
 }
 
@@ -58,9 +63,9 @@ db.run(`
 `);
 
 //
-// FUNCIÓN PARA VALIDAR FECHA (DD/MM) – Máximo de 1 semana
+// FUNCIÓN PARA VALIDAR FECHA (DD/MM) – Máximo de 2 días
 //
-function isWithinOneWeek(dateStr) {
+function isWithinTwoDays(dateStr) {
     const ddmmRegex = /^\d{2}\/\d{2}$/;
     if (!ddmmRegex.test(dateStr)) return true; // Si no tiene ese formato, se considera válida
 
@@ -71,14 +76,16 @@ function isWithinOneWeek(dateStr) {
     const now = new Date();
     let year = now.getFullYear();
     
+    // Si el mes indicado es mayor que el mes actual, se asume que la fecha corresponde al año anterior.
     if (month > (now.getMonth() + 1)) {
         year = year - 1;
     }
     
     const newsDate = new Date(year, month - 1, day);
-    const oneWeekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    // Se define el límite como dos días atrás desde hoy.
+    const twoDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2);
     
-    return newsDate >= oneWeekAgo;
+    return newsDate >= twoDaysAgo;
 }
 
 //
@@ -185,7 +192,7 @@ async function sendEmail(recipient, newsItems) {
 //
 // FUNCIÓN PRINCIPAL
 //
-(async () => {
+async function ejecutarTarea() {
     console.log("⏳ Iniciando scraping...");
     let newNews = [];  // Noticias nuevas (con la empresa asociada)
 
@@ -196,7 +203,7 @@ async function sendEmail(recipient, newsItems) {
             for (const newsItem of scrapedNews) {
                 const ddmmRegex = /^\d{2}\/\d{2}$/;
                 if (ddmmRegex.test(newsItem.date)) {
-                    if (!isWithinOneWeek(newsItem.date)) {
+                    if (!isWithinTwoDays(newsItem.date)) {
                         console.log(`Se descarta noticia por fecha antigua: "${newsItem.news}" (Fecha: ${newsItem.date})`);
                         continue;
                     }
@@ -231,5 +238,7 @@ async function sendEmail(recipient, newsItems) {
     }
     
     console.log("✅ Scraping completado.");
-    process.exit(0);
-})();
+}
+
+// Programar la tarea para que se repita cada 5 minutos (5 * 60 * 1000 milisegundos)
+setInterval(ejecutarTarea, 5 * 60 * 1000);
