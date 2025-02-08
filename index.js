@@ -3,6 +3,11 @@ const nodemailer = require('nodemailer');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
+// Deshabilitar los logs en producción
+if (process.env.RAILWAY_ENVIRONMENT === 'production') {
+    console.log = function() {};
+}  
+
 //
 // CARGA DE SUSCRIPCIONES DESDE VARIABLE DE ENTORNO
 //
