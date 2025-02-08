@@ -6,6 +6,7 @@ require('dotenv').config();
 //
 // CARGA DE SUSCRIPCIONES DESDE VARIABLE DE ENTORNO
 //
+let subscriptions;
 try {
     const rawSubscriptions = process.env.SUBSCRIPTIONS;
     
@@ -21,8 +22,7 @@ try {
 
 //
 // CONFIGURACIÓN DE EMPRESAS A SCRAPEAR
-// 
-// 
+//
 const empresas = [
     { nombre: "HENSOLDT", url: "https://es.marketscreener.com/cotizacion/accion/HENSOLDT-AG-112902521/noticia/" },
     { nombre: "DEXCOM", url: "https://es.marketscreener.com/cotizacion/accion/DEXCOM-INC-9115/noticia/" },
@@ -99,7 +99,7 @@ function isWithinTwoDays(dateStr) {
 //
 // FUNCIÓN DE SCRAPING
 //
-async function scrapeWebsite(url, company) {
+async function scrapeWebsite(url) {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
 
@@ -112,10 +112,19 @@ async function scrapeWebsite(url, company) {
             rows.forEach(row => {
                 const cols = row.querySelectorAll('td');
                 if (cols.length >= 2) {
-                    const news = cols[0]?.innerText.trim();
-                    const date = cols[1]?.innerText.trim();
+                    // Se busca la etiqueta <a> en el primer TD para extraer el enlace de la noticia
+                    const anchor = cols[0].querySelector('a');
+                    let news = "";
+                    let newsUrl = "";
+                    if (anchor) {
+                        news = anchor.innerText.trim();
+                        newsUrl = anchor.href;
+                    } else {
+                        news = cols[0].innerText.trim();
+                    }
+                    const date = cols[1].innerText.trim();
                     if (news) {
-                        newsData.push({ news, date });
+                        newsData.push({ news, date, url: newsUrl });
                     }
                 }
             });
@@ -162,7 +171,7 @@ function saveToDatabase(company, newsItem) {
 }
 
 //
-// FUNCIÓN PARA ENVIAR EMAIL CON VISTA PREVIA DE LAS PRIMERAS 3 LÍNEAS
+// FUNCIÓN PARA ENVIAR EMAIL CON VISTA PREVIA (HTML)
 //
 async function sendEmail(recipient, newsItems) {
     let transporter = nodemailer.createTransport({
@@ -173,27 +182,32 @@ async function sendEmail(recipient, newsItems) {
         }
     });
 
-    // Construir el contenido del correo
-    let emailText = newsItems
-        .map(item => `Empresa: ${item.company}\nNoticia: ${item.news}\nFecha: ${item.date}`)
-        .join('\n\n');
-    
+    // Construir el contenido HTML del correo
+    let emailHtml = newsItems
+        .map(item => {
+            const link = item.url ? `<a href="${item.url}">${item.news}</a>` : item.news;
+            return `<p>
+                        <strong>Empresa:</strong> ${item.company}<br>
+                        <strong>Noticia:</strong> ${link}<br>
+                        <strong>Fecha:</strong> ${item.date}
+                    </p>`;
+        })
+        .join('');
+
     let mailOptions = {
         from: process.env.EMAIL_USER,
         to: recipient,
         subject: `Nuevas noticias extraídas`,
-        text: emailText
+        html: emailHtml
     };
 
     try {
-        let info = await transporter.sendMail(mailOptions);
-        
-        // Mostrar las tres primeras letras del email en los logs
-        const emailPreview = recipient.slice(0, 3); // Toma las tres primeras letras del correo
+        await transporter.sendMail(mailOptions);
+        // Solo se muestran los primeros 3 caracteres del email para seguridad
+        const emailPreview = recipient.slice(0, 3);
         console.log(`Correo enviado correctamente a: ${emailPreview}...`);
-
     } catch (error) {
-        console.error(`Error enviando email a destinatario:`, error);
+        console.error(`Error enviando email a ${recipient.slice(0, 3)}...:`, error);
     }
 }
 
@@ -202,51 +216,56 @@ async function sendEmail(recipient, newsItems) {
 //
 async function ejecutarTarea() {
     console.log("⏳ Iniciando scraping...");
-    let newNews = [];  // Noticias nuevas (con la empresa asociada)
+    // Iterar sobre cada suscripción (correo)
+    for (const subscription of subscriptions) {
+        // Mostrar solo los primeros 3 caracteres del email en consola
+        console.log(`\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`);
+        let newNews = []; // Noticias nuevas para este suscriptor
 
-    for (let empresa of empresas) {
-        console.log(`🔍 Scrapeando: ${empresa.nombre}`);
-        const scrapedNews = await scrapeWebsite(empresa.url, empresa.nombre);
-        if (scrapedNews && scrapedNews.length > 0) {
-            for (const newsItem of scrapedNews) {
-                const ddmmRegex = /^\d{2}\/\d{2}$/;
-                if (ddmmRegex.test(newsItem.date)) {
-                    if (!isWithinTwoDays(newsItem.date)) {
-                        console.log(`Se descarta noticia por fecha antigua: "${newsItem.news}" (Fecha: ${newsItem.date})`);
-                        continue;
+        // Iterar sobre cada empresa a la que está suscrito
+        for (const companyName of subscription.companies) {
+            // Buscar la configuración de la empresa en el array empresas
+            const empresa = empresas.find(e => e.nombre === companyName);
+            if (!empresa) {
+                console.warn(`La empresa ${companyName} no se encontró en la configuración.`);
+                continue;
+            }
+            console.log(`🔍 Scrapeando: ${empresa.nombre}`);
+            const scrapedNews = await scrapeWebsite(empresa.url);
+            if (scrapedNews && scrapedNews.length > 0) {
+                for (const newsItem of scrapedNews) {
+                    const ddmmRegex = /^\d{2}\/\d{2}$/;
+                    if (ddmmRegex.test(newsItem.date)) {
+                        if (!isWithinTwoDays(newsItem.date)) {
+                            console.log(`Se descarta noticia por fecha antigua: "${newsItem.news}" (Fecha: ${newsItem.date})`);
+                            continue;
+                        }
                     }
-                }
-                try {
-                    const exists = await checkIfExists(newsItem.news);
-                    if (!exists) {
-                        await saveToDatabase(empresa.nombre, newsItem);
-                        newNews.push({ ...newsItem, company: empresa.nombre });
-                    } else {
-                        console.log(`Noticia ya registrada: ${newsItem.news}`);
+                    try {
+                        const exists = await checkIfExists(newsItem.news);
+                        if (!exists) {
+                            await saveToDatabase(empresa.nombre, newsItem);
+                            newNews.push({ ...newsItem, company: empresa.nombre });
+                        } else {
+                            console.log(`Noticia ya registrada: ${newsItem.news}`);
+                        }
+                    } catch (error) {
+                        console.error('Error procesando noticia:', error);
                     }
-                } catch (error) {
-                    console.error('Error procesando noticia:', error);
                 }
             }
         }
+
+        // Enviar email si hay noticias nuevas para este suscriptor
+        if (newNews.length > 0) {
+            await sendEmail(subscription.email, newNews);
+        } else {
+            console.log(`No hay noticias nuevas para enviar a ${subscription.email.slice(0, 3)}...`);
+        }
     }
 
-    // Enviar correo a cada suscriptor con las noticias de las empresas a las que están suscritos.
-    if (newNews.length > 0) {
-        for (const subscription of subscriptions) {
-            const filteredNews = newNews.filter(item => subscription.companies.includes(item.company));
-            if (filteredNews.length > 0) {
-                await sendEmail(subscription.email, filteredNews);
-            } else {
-                console.log(`No hay noticias nuevas para enviar a destinatario.`);
-            }
-        }
-    } else {
-        console.log("✅ No hay noticias nuevas para enviar a ningún destinatario.");
-    }
-    
     console.log("✅ Scraping completado.");
 }
 
-// Programar la tarea para que se repita cada 5 minutos (5 * 60 * 1000 milisegundos)
+// Ejecutar la tarea cada 5 minutos
 setInterval(ejecutarTarea, 5 * 60 * 1000);
