@@ -1,4 +1,5 @@
-const { chromium } = require('playwright');
+const cheerio = require('cheerio'); // Añade esta línea al inicio de tu archivo, junto con los otros requires
+const https = require('https'); // Necesario para hacer peticiones HTTPS con Node.js
 const nodemailer = require('nodemailer');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
@@ -76,73 +77,80 @@ db.run(`
 `);
 
 //
-// FUNCIÓN PARA VALIDAR FECHA (DD/MM) – Máximo de 2 días
+// FUNCIÓN PARA VALIDAR FECHA (DD/MM) – Máximo de N días (configurable)
 //
-function isWithinTwoDays(dateStr) {
+function isWithinNDays(dateStr, nDays) { // Ahora acepta nDays como argumento
     const ddmmRegex = /^\d{2}\/\d{2}$/;
     if (!ddmmRegex.test(dateStr)) return true; // Si no tiene ese formato, se considera válida
 
     const [dayStr, monthStr] = dateStr.split('/');
     const day = parseInt(dayStr, 10);
     const month = parseInt(monthStr, 10);
-    
+
     const now = new Date();
     let year = now.getFullYear();
-    
+
     // Si el mes indicado es mayor que el mes actual, se asume que la fecha corresponde al año anterior.
     if (month > (now.getMonth() + 1)) {
         year = year - 1;
     }
-    
+
     const newsDate = new Date(year, month - 1, day);
-    // Se define el límite como dos días atrás desde hoy.
-    const twoDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2);
-    
-    return newsDate >= twoDaysAgo;
+    // Se define el límite como N días atrás desde hoy.
+    const nDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - nDays); // Usa nDays
+
+    return newsDate >= nDaysAgo;
 }
 
 //
 // FUNCIÓN DE SCRAPING
 //
 async function scrapeWebsite(url) {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            let html = '';
+            res.on('data', (chunk) => {
+                html += chunk;
+            });
+            res.on('end', () => {
+                const $ = cheerio.load(html);
+                const newsData = [];
+                const rows = $('#newsScreener tr');
+                for (let i = 0; i < rows.length; i++) { // Cambiar a bucle for tradicional para poder usar 'break'
+                    const row = rows[i];
+                    const cols = $(row).find('td');
+                    if (cols.length >= 2) {
+                        const anchor = $(cols[0]).find('a');
+                        let news = "";
+                        let newsUrl = "";
+                        if (anchor.length > 0) {
+                            news = anchor.text().trim();
+                            newsUrl = anchor.attr('href');
+                            if (newsUrl && !newsUrl.startsWith('http')) { // Asegurar URL absoluta si es relativa
+                                newsUrl = new URL(newsUrl, url).href;
+                            }
+                        } else {
+                            news = $(cols[0]).text().trim();
+                        }
+                        const date = $(cols[1]).text().trim();
 
-    try {
-        await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-
-        const data = await page.evaluate(() => {
-            const rows = document.querySelectorAll('#newsScreener tr');
-            const newsData = [];
-            rows.forEach(row => {
-                const cols = row.querySelectorAll('td');
-                if (cols.length >= 2) {
-                    // Se busca la etiqueta <a> en el primer TD para extraer el enlace de la noticia
-                    const anchor = cols[0].querySelector('a');
-                    let news = "";
-                    let newsUrl = "";
-                    if (anchor) {
-                        news = anchor.innerText.trim();
-                        newsUrl = anchor.href;
-                    } else {
-                        news = cols[0].innerText.trim();
-                    }
-                    const date = cols[1].innerText.trim();
-                    if (news) {
-                        newsData.push({ news, date, url: newsUrl });
+                        if (news) {
+                            if (isWithinNDays(date, 1)) { // Comprobar si la noticia es de máximo 1 día de antigüedad (LIMITE DE 1 DÍA)
+                                newsData.push({ news, date, url: newsUrl });
+                            } else {
+                                console.log(`Noticia con fecha de más de 1 día detectada. Deteniendo procesamiento para URL: ${url}. (Fecha: ${date})`);
+                                break; // <---- ¡¡¡DETENER PROCESAMIENTO DE NOTICIAS PARA ESTA EMPRESA!!!
+                            }
+                        }
                     }
                 }
+                resolve(newsData);
             });
-            return newsData;
+        }).on('error', (error) => {
+            console.error(`Error en ${url}:`, error);
+            reject(null); // Rechazar la promesa en caso de error
         });
-
-        await browser.close();
-        return data;
-    } catch (error) {
-        console.error(`Error en ${url}:`, error);
-        await browser.close();
-        return null;
-    }
+    });
 }
 
 //
@@ -221,15 +229,11 @@ async function sendEmail(recipient, newsItems) {
 //
 async function ejecutarTarea() {
     console.log("⏳ Iniciando scraping...");
-    // Iterar sobre cada suscripción (correo)
     for (const subscription of subscriptions) {
-        // Mostrar solo los primeros 3 caracteres del email en consola
         console.log(`\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`);
-        let newNews = []; // Noticias nuevas para este suscriptor
+        let newNews = [];
 
-        // Iterar sobre cada empresa a la que está suscrito
         for (const companyName of subscription.companies) {
-            // Buscar la configuración de la empresa en el array empresas
             const empresa = empresas.find(e => e.nombre === companyName);
             if (!empresa) {
                 console.warn(`La empresa ${companyName} no se encontró en la configuración.`);
@@ -239,13 +243,6 @@ async function ejecutarTarea() {
             const scrapedNews = await scrapeWebsite(empresa.url);
             if (scrapedNews && scrapedNews.length > 0) {
                 for (const newsItem of scrapedNews) {
-                    const ddmmRegex = /^\d{2}\/\d{2}$/;
-                    if (ddmmRegex.test(newsItem.date)) {
-                        if (!isWithinTwoDays(newsItem.date)) {
-                            console.log(`Se descarta noticia por fecha antigua: "${newsItem.news}" (Fecha: ${newsItem.date})`);
-                            continue;
-                        }
-                    }
                     try {
                         const exists = await checkIfExists(newsItem.news);
                         if (!exists) {
@@ -261,14 +258,12 @@ async function ejecutarTarea() {
             }
         }
 
-        // Enviar email si hay noticias nuevas para este suscriptor
         if (newNews.length > 0) {
             await sendEmail(subscription.email, newNews);
         } else {
             console.log(`No hay noticias nuevas para enviar a ${subscription.email.slice(0, 3)}...`);
         }
     }
-
     console.log("✅ Scraping completado.");
 }
 
