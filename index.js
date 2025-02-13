@@ -54,6 +54,8 @@ const empresas = [
     { nombre: "PUMA", url: "https://es.marketscreener.com/cotizacion/accion/PUMA-SE-436505/noticia/" },
     { nombre: "DELL", url: "https://es.marketscreener.com/cotizacion/accion/DELL-TECHNOLOGIES-INC-50061235/noticia/" },
     { nombre: "UPS", url: "https://es.marketscreener.com/cotizacion/accion/UNITED-PARCEL-SERVICE-INC-14758/noticia/" },
+    { nombre: "TUI", url: "https://es.marketscreener.com/cotizacion/accion/TUI-AG-470539/noticia/" },
+    { nombre: "JPMORGAN", url: "https://es.marketscreener.com/cotizacion/accion/JPMORGAN-CHASE-CO-37468997/noticia/" },
 ];
 
 //
