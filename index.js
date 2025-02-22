@@ -327,12 +327,10 @@ async function limitConcurrency(items, limit, asyncFn) {
         const p = Promise.resolve().then(() => asyncFn(item));
         results.push(p);
 
-        if (limit <= items.length) {
-            const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-            executing.push(e);
-            if (executing.length >= limit) {
-                await Promise.race(executing);
-            }
+        const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+        executing.push(e);
+        if (executing.length >= limit) {
+            await Promise.race(executing);
         }
     }
     return Promise.all(results);
