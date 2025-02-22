@@ -92,27 +92,6 @@ db.run(`
     }
 });
 
-function isWithinNDays(dateStr, nDays) {
-    const ddmmRegex = /^\d{2}\/\d{2}$/;
-    if (!ddmmRegex.test(dateStr)) return true;
-
-    const [dayStr, monthStr] = dateStr.split('/');
-    const day = parseInt(dayStr, 10);
-    const month = parseInt(monthStr, 10);
-
-    const now = new Date();
-    let year = now.getFullYear();
-
-    if (month > (now.getMonth() + 1)) {
-        year = year - 1;
-    }
-
-    const newsDate = new Date(year, month - 1, day);
-    const nDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - nDays);
-
-    return newsDate >= nDaysAgo;
-}
-
 async function scrapeWebsite(url) {
     return new Promise((resolve, reject) => {
         https.get(url, (res) => {
@@ -143,12 +122,11 @@ async function scrapeWebsite(url) {
                         const date = $(cols[1]).text().trim();
 
                         if (news) {
-                            if (isWithinNDays(date, 1)) {
-                                newsData.push({ news, date, url: newsUrl });
-                            } else {
-                                console.debug(`Noticia con fecha de más de 1 día detectada. Deteniendo procesamiento para URL: ${url}. (Fecha: ${date})`);
+                            if (/^\d{2}\/\d{2}$/.test(date)) {
+                                console.debug(`Fecha en formato DD/MM detectada. Deteniendo procesamiento para URL: ${url}. (Fecha: ${date})`);
                                 break;
                             }
+                            newsData.push({ news, date, url: newsUrl });
                         }
                     }
                 }
