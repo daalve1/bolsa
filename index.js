@@ -46,7 +46,7 @@ const empresas = [
     { nombre: "MICROSTRATEGY", url: "https://es.marketscreener.com/cotizacion/accion/MICROSTRATEGY-INCORPORATE-10105/noticia/" },
     { nombre: "NVIDIA", url: "https://es.marketscreener.com/cotizacion/accion/NVIDIA-CORPORATION-57355629/noticia/" },
     { nombre: "GERRESHEIMER", url: "https://es.marketscreener.com/cotizacion/accion/GERRESHEIMER-AG-599546/noticia/" },
-    { nombre: "PLATOALTO", url: "https://es.marketscreener.com/cotizacion/accion/PALO-ALTO-NETWORKS-INC-11067980/noticia/" },
+    { nombre: "PALOALTO", url: "https://es.marketscreener.com/cotizacion/accion/PALO-ALTO-NETWORKS-INC-11067980/noticia/" },
     { nombre: "HELLOFRESH", url: "https://es.marketscreener.com/cotizacion/accion/HELLOFRESH-SE-38533857/noticia/" },
     { nombre: "ELF BEAUTY", url: "https://es.marketscreener.com/cotizacion/accion/ELF-BEAUTY-31370490/noticia/" },
     { nombre: "KERING", url: "https://es.marketscreener.com/cotizacion/accion/KERING-4683/noticia/" },
@@ -56,6 +56,9 @@ const empresas = [
     { nombre: "UPS", url: "https://es.marketscreener.com/cotizacion/accion/UNITED-PARCEL-SERVICE-INC-14758/noticia/" },
     { nombre: "TUI", url: "https://es.marketscreener.com/cotizacion/accion/TUI-AG-470539/noticia/" },
     { nombre: "JPMORGAN", url: "https://es.marketscreener.com/cotizacion/accion/JPMORGAN-CHASE-CO-37468997/noticia/" },
+    { nombre: "DWAVEQUANTUM", url: "https://es.marketscreener.com/cotizacion/accion/D-WAVE-QUANTUM-INC-142129231/noticia/" },
+    { nombre: "FRESHPET", url: "https://es.marketscreener.com/cotizacion/accion/FRESHPET-INC-18509105/noticia/" },
+    { nombre: "UNITEDHEALTH", url: "https://es.marketscreener.com/cotizacion/accion/UNITEDHEALTH-GROUP-INC-14750/noticia/" },
 ];
 
 //
@@ -69,14 +72,26 @@ const db = new sqlite3.Database('./scraping.db', (err) => {
     }
 });
 
+// Tabla con el historial de noticias
 db.run(`
-    CREATE TABLE IF NOT EXISTS scraped_data (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company TEXT,
-        news TEXT,
-        date TEXT,
+    CREATE TABLE IF NOT EXISTS scraped_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company TEXT,
+        news TEXT,
+        date TEXT,
         insertion_time DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+    );
+`);
+
+// Tabla para registrar a qué email se envió cada noticia
+db.run(`
+    CREATE TABLE IF NOT EXISTS sent_news (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        news_id INTEGER,
+        email TEXT,
+        sent_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (news_id) REFERENCES scraped_data(id)
+    );
 `);
 
 //
@@ -159,31 +174,44 @@ async function scrapeWebsite(url) {
 //
 // FUNCIONES DE BASE DE DATOS
 //
-function checkIfExists(news) {
-    return new Promise((resolve, reject) => {
-        db.get('SELECT * FROM scraped_data WHERE news = ?', [news], (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-        });
-    });
+function checkIfExists(news, email) {
+    return new Promise((resolve, reject) => {
+        db.get(`
+            SELECT sn.id FROM sent_news sn
+            JOIN scraped_data sd ON sn.news_id = sd.id
+            WHERE sd.news = ? AND sn.email = ?
+        `, [news, email], (err, row) => {
+            if (err) reject(err);
+            else resolve(row); // Si existe, ya se envió la noticia a ese email.
+        });
+    });
 }
 
-function saveToDatabase(company, newsItem) {
-    return new Promise((resolve, reject) => {
-        const { news, date } = newsItem;
-        db.run(
-            'INSERT INTO scraped_data (company, news, date) VALUES (?, ?, ?)',
-            [company, news, date],
-            function (err) {
-                if (err) {
-                    reject(err);
-                } else {
-                    console.log(`Datos insertados para "${company}" - ID: ${this.lastID}`);
-                    resolve(this.lastID);
-                }
-            }
-        );
-    });
+function saveToDatabase(company, newsItem, email) {
+    return new Promise((resolve, reject) => {
+        const { news, date } = newsItem;
+        db.run(
+            'INSERT INTO scraped_data (company, news, date) VALUES (?, ?, ?)',
+            [company, news, date],
+            function (err) {
+                if (err) {
+                    reject(err);
+                } else {
+                    console.log(`Datos insertados para "${company}" - ID: ${this.lastID}`);
+                    const newsId = this.lastID;
+                    // Registrar en sent_news el envío a este email.
+                    db.run(
+                        'INSERT INTO sent_news (news_id, email) VALUES (?, ?)',
+                        [newsId, email],
+                        function (err) {
+                            if (err) reject(err);
+                            else resolve(newsId);
+                        }
+                    );
+                }
+            }
+        );
+    });
 }
 
 //
@@ -254,43 +282,44 @@ async function cleanupDatabase() {
 // FUNCIÓN PRINCIPAL
 //
 async function ejecutarTarea() {
-    console.log("⏳ Iniciando scraping...");
-    for (const subscription of subscriptions) {
-        console.log(`\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`);
-        let newNews = [];
+    console.log("⏳ Iniciando scraping...");
+    for (const subscription of subscriptions) {
+        console.log(`\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`);
+        let newNews = [];
 
-        for (const companyName of subscription.companies) {
-            const empresa = empresas.find(e => e.nombre === companyName);
-            if (!empresa) {
-                console.warn(`La empresa ${companyName} no se encontró en la configuración.`);
-                continue;
-            }
-            console.log(`🔍 Scrapeando: ${empresa.nombre}`);
-            const scrapedNews = await scrapeWebsite(empresa.url);
-            if (scrapedNews && scrapedNews.length > 0) {
-                for (const newsItem of scrapedNews) {
-                    try {
-                        const exists = await checkIfExists(newsItem.news);
-                        if (!exists) {
-                            await saveToDatabase(empresa.nombre, newsItem);
-                            newNews.push({ ...newsItem, company: empresa.nombre });
-                        } else {
-                            console.log(`Noticia ya registrada: ${newsItem.news}`);
-                        }
-                    } catch (error) {
-                        console.error('Error procesando noticia:', error);
-                    }
-                }
-            }
-        }
+        for (const companyName of subscription.companies) {
+            const empresa = empresas.find(e => e.nombre === companyName);
+            if (!empresa) {
+                console.warn(`La empresa ${companyName} no se encontró en la configuración.`);
+                continue;
+            }
+            console.log(`🔍 Scrapeando: ${empresa.nombre}`);
+            const scrapedNews = await scrapeWebsite(empresa.url);
+            if (scrapedNews && scrapedNews.length > 0) {
+                for (const newsItem of scrapedNews) {
+                    try {
+                        // Verificar si la noticia ya fue enviada a este email
+                        const exists = await checkIfExists(newsItem.news, subscription.email);
+                        if (!exists) {
+                            await saveToDatabase(empresa.nombre, newsItem, subscription.email);
+                            newNews.push({ ...newsItem, company: empresa.nombre });
+                        } else {
+                            console.log(`Noticia ya registrada para ${subscription.email.slice(0, 3)}: ${newsItem.news}`);
+                        }
+                    } catch (error) {
+                        console.error('Error procesando noticia:', error);
+                    }
+                }
+            }
+        }
 
-        if (newNews.length > 0) {
-            await sendEmail(subscription.email, newNews);
-        } else {
-            console.log(`No hay noticias nuevas para enviar a ${subscription.email.slice(0, 3)}...`);
-        }
-    }
-    console.log("✅ Scraping completado.");
+        if (newNews.length > 0) {
+            await sendEmail(subscription.email, newNews);
+        } else {
+            console.log(`No hay noticias nuevas para enviar a ${subscription.email.slice(0, 3)}...`);
+        }
+    }
+    console.log("✅ Scraping completado.");
 }
 
 // Ejecutar la tarea cada 5 minutos
