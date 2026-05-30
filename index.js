@@ -2,6 +2,7 @@ const cheerio = require('cheerio');
 const https = require('https');
 const nodemailer = require('nodemailer');
 const sqlite3 = require('sqlite3').verbose();
+const http = require('http');
 require('dotenv').config();
 
 if (process.env.RAILWAY_ENVIRONMENT === 'production') {
@@ -314,8 +315,33 @@ async function limitConcurrency(items, limit, asyncFn) {
     return Promise.all(results);
 }
 
-// Ejecutar la tarea cada 5 minutos
-setInterval(ejecutarTarea, 5 * 60 * 1000);
+// CONFIGURACIÓN DEL SERVIDOR WEB PARA RAILWAY SERVERLESS
+const PORT = process.env.PORT || 8080;
 
-// Ejecutar la limpieza de la base de datos cada semana (cada 7 días aprox.)
-setInterval(cleanupDatabase, 14 * 24 * 60 * 60 * 1000);
+const server = http.createServer(async (req, res) => {
+    // Si visitas la URL normal, solo te dice que está vivo
+    if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('✅ El bot de noticias está funcionando correctamente.');
+    } 
+    // Esta es la ruta mágica. Si visitas /ejecutar, el bot busca las noticias
+    else if (req.url === '/ejecutar') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('🚀 Iniciando scraping de noticias de bolsa en segundo plano...');
+        
+        // Ejecutamos las tareas
+        await ejecutarTarea();
+        
+        // Limpiamos la base de datos de vez en cuando (ejecución sin esperar)
+        cleanupDatabase().catch(err => console.error(err));
+    } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Ruta no encontrada');
+    }
+});
+
+server.listen(PORT, () => {
+    console.debug(`🌐 Servidor web escuchando en el puerto ${PORT}`);
+    // Ejecutamos la tarea una vez al arrancar para comprobar que va bien
+    ejecutarTarea();
+});
