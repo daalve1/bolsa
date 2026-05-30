@@ -5,9 +5,9 @@ const sqlite3 = require('sqlite3').verbose();
 const http = require('http');
 require('dotenv').config();
 
-if (process.env.RAILWAY_ENVIRONMENT === 'production') {
+/*if (process.env.RAILWAY_ENVIRONMENT === 'production') {
     console.debug = function() {};
-}
+}*/
 
 let subscriptions;
 try {
