@@ -140,6 +140,14 @@ const empresas = [
     nombre: "UNITEDHEALTH",
     url: "https://es.marketscreener.com/cotizacion/accion/UNITEDHEALTH-GROUP-INC-14750/noticia/",
   },
+  {
+    nombre: "PRADA",
+    url: "https://es.marketscreener.com/cotizacion/accion/PRADA-S-P-A-120793475/noticia/",
+  },
+  {
+    nombre: "FERRARI",
+    url: "https://es.marketscreener.com/cotizacion/accion/FERRARI-N-V-25531423/noticia/",
+  },
 ];
 
 // Comprueba si han pasado 6 minutos o menos
