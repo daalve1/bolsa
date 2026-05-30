@@ -1,13 +1,12 @@
 const cheerio = require("cheerio");
-const https = require("https");
+const http = require("http"); // Servidor web para Railway
 const nodemailer = require("nodemailer");
-const sqlite3 = require("sqlite3").verbose();
-const http = require("http");
 require("dotenv").config();
 
-/*if (process.env.RAILWAY_ENVIRONMENT === 'production') {
-    console.debug = function() {};
-}*/
+// Mantenemos los logs visibles comentando esto
+if (process.env.RAILWAY_ENVIRONMENT === "production") {
+  console.debug = function () {};
+}
 
 let subscriptions;
 try {
@@ -143,182 +142,115 @@ const empresas = [
   },
 ];
 
-const db = new sqlite3.Database("./scraping.db", (err) => {
-  if (err) {
-    console.error("Error al abrir la base de datos:", err.message);
-  } else {
-    console.debug("Conectado a la base de datos SQLite");
+// Comprueba si han pasado 6 minutos o menos
+function esNoticiaReciente(horaStr, margenMinutos = 6) {
+  const match = horaStr.match(/^(\d{2}):(\d{2})/);
+  if (!match) return false;
+
+  const horasNoticia = parseInt(match[1], 10);
+  const minsNoticia = parseInt(match[2], 10);
+
+  const ahoraMadrid = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Europe/Madrid" }),
+  );
+  const horasAhora = ahoraMadrid.getHours();
+  const minsAhora = ahoraMadrid.getMinutes();
+
+  const totalMinsNoticia = horasNoticia * 60 + minsNoticia;
+  const totalMinsAhora = horasAhora * 60 + minsAhora;
+
+  let diferencia = totalMinsAhora - totalMinsNoticia;
+  console.log("⏱️ Diferencia en minutos:", diferencia);
+  if (diferencia < 0) {
+    diferencia += 24 * 60;
   }
-});
 
-db.run(
-  `
-    CREATE TABLE IF NOT EXISTS scraped_data (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company TEXT,
-        news TEXT,
-        date TEXT,
-        insertion_time DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-`,
-  (err) => {
-    if (err) {
-      console.error("Error al crear la tabla scraped_data:", err.message);
-    } else {
-      console.debug("Tabla scraped_data creada o ya existe.");
-    }
-  },
-);
+  return diferencia >= 0 && diferencia <= margenMinutos;
+}
 
-db.run(
-  `
-    CREATE TABLE IF NOT EXISTS sent_news (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        news_id INTEGER,
-        email TEXT,
-        sent_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (news_id) REFERENCES scraped_data(id)
-    );
-`,
-  (err) => {
-    if (err) {
-      console.error("Error al crear la tabla sent_news:", err.message);
-    } else {
-      console.debug("Tabla sent_news creada o ya existe.");
-    }
-  },
-);
-
+// Scraping con Headers y control de errores HTTP (403, etc)
 async function scrapeWebsite(url) {
-  return new Promise((resolve, reject) => {
-    // 1. Configuramos las opciones con las cabeceras para "disfrazar" al bot
-    const opciones = {
+  try {
+    // Usamos fetch con cabeceras extremas para imitar al 100% a Google Chrome
+    const response = await fetch(url, {
+      method: "GET",
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
+        "Sec-Ch-Ua":
+          '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
       },
-    };
+    });
 
-    // 2. Pasamos 'opciones' como segundo parámetro a https.get
-    https
-      .get(url, opciones, (res) => {
-        // 3. Comprobamos si la página nos está bloqueando (ej. Error 403)
-        if (res.statusCode !== 200) {
-          console.error(
-            `❌ Bloqueo o Error detectado en ${url}. Código HTTP: ${res.statusCode}`,
-          );
+    // Si el servidor nos sigue bloqueando, lanzamos el error
+    if (!response.ok) {
+      throw new Error(`HTTP Status Code: ${response.status}`);
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const newsData = [];
+    const rows = $("#newsScreener tr");
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const cols = $(row).find("td");
+
+      if (cols.length >= 2) {
+        const date = $(cols[0]).text().trim();
+
+        const anchor = $(cols[1]).find("a");
+        let news =
+          anchor.length > 0 ? anchor.text().trim() : $(cols[1]).text().trim();
+        let newsUrl = anchor.length > 0 ? anchor.attr("href") : "";
+
+        if (newsUrl && !newsUrl.startsWith("http")) {
+          newsUrl = new URL(newsUrl, url).href;
         }
 
-        let html = "";
-        res.on("data", (chunk) => {
-          html += chunk;
-        });
-
-        res.on("end", () => {
-          const $ = cheerio.load(html);
-          const newsData = [];
-          const rows = $("#newsScreener tr");
-
-          for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            const cols = $(row).find("td");
-            if (cols.length >= 2) {
-              const anchor = $(cols[0]).find("a");
-              let news = "";
-              let newsUrl = "";
-              if (anchor.length > 0) {
-                news = anchor.text().trim();
-                newsUrl = anchor.attr("href");
-                if (newsUrl && !newsUrl.startsWith("http")) {
-                  newsUrl = new URL(newsUrl, url).href;
-                }
-              } else {
-                news = $(cols[0]).text().trim();
-              }
-              const date = $(cols[1]).text().trim();
-
-              if (news) {
-                if (/^\d{2}\/\d{2}$/.test(date)) {
-                  console.debug(
-                    `Fecha en formato DD/MM detectada. Deteniendo procesamiento para URL: ${url}. (Fecha: ${date})`,
-                  );
-                  break;
-                }
-                newsData.push({ news, date, url: newsUrl });
-              }
-            }
+        if (news) {
+          if (/^\d{2}\/\d{2}$/.test(date)) {
+            break;
           }
-          resolve(newsData);
-        });
-      })
-      .on("error", (error) => {
-        console.error(`Error de red en ${url}:`, error);
-        reject(error);
-      });
-  });
-}
 
-function checkIfExists(news, email) {
-  return new Promise((resolve, reject) => {
-    const sqlQuery_checkIfExists = `
-            SELECT sn.id FROM sent_news sn
-            JOIN scraped_data sd ON sn.news_id = sd.id
-            WHERE sd.news = ? AND sn.email = ?
-        `;
-    const params_checkIfExists = [news, email];
-
-    db.get(sqlQuery_checkIfExists, params_checkIfExists, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
-}
-
-function saveToDatabase(company, newsItem, email) {
-  return new Promise((resolve, reject) => {
-    const { news, date } = newsItem;
-    const sqlQuery_saveToDatabase = `
-            INSERT INTO scraped_data (company, news, date) VALUES (?, ?, ?)
-        `;
-    const params_saveToDatabase = [company, news, date];
-
-    db.run(sqlQuery_saveToDatabase, params_saveToDatabase, function (err) {
-      if (err) {
-        console.error("Error al insertar en scraped_data:", err.message);
-        reject(err);
-      } else {
-        console.debug(
-          `Datos insertados para "${company}" - ID: ${this.lastID}`,
-        );
-        const newsId = this.lastID;
-        const sqlQuery_sentNews = `
-                    INSERT INTO sent_news (news_id, email) VALUES (?, ?)
-                `;
-        const params_sentNews = [newsId, email];
-
-        db.run(sqlQuery_sentNews, params_sentNews, function (err) {
-          if (err) {
-            console.error("Error al insertar en sent_news:", err.message);
-            reject(err);
-          } else {
-            resolve(newsId);
+          if (esNoticiaReciente(date)) {
+            newsData.push({ news, date, url: newsUrl });
           }
-        });
+        }
       }
-    });
-  });
+    }
+    return newsData;
+  } catch (error) {
+    throw error;
+  }
 }
 
+// Al no haber BBDD, procesamos directo
+async function procesarNoticia(newsItem, empresa, subscription) {
+  return { ...newsItem, company: empresa.nombre };
+}
+
+// Envío de correo
 async function sendEmail(recipient, newsItems) {
   let transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
 
@@ -328,123 +260,31 @@ async function sendEmail(recipient, newsItems) {
         ? `<a href="${item.url}">${item.news}</a>`
         : item.news;
       return `<p>
-                                <strong>Empresa:</strong> ${item.company}<br>
-                                <strong>Noticia:</strong> ${link}<br>
-                                <strong>Fecha:</strong> ${item.date}
-                            </p>`;
+                <strong>Empresa:</strong> ${item.company}<br>
+                <strong>Noticia:</strong> ${link}<br>
+                <strong>Fecha:</strong> ${item.date}
+            </p>`;
     })
     .join("");
 
   let mailOptions = {
     from: process.env.EMAIL_USER,
     to: recipient,
-    subject: `Nuevas noticias extraídas`,
+    subject: `Nuevas noticias de bolsa extraídas`,
     html: emailHtml,
   };
 
   try {
     await transporter.sendMail(mailOptions);
-    const emailPreview = recipient.slice(0, 3);
-    console.debug(`Correo enviado correctamente a: ${emailPreview}...`);
-  } catch (error) {
-    console.error(`Error enviando email a ${recipient.slice(0, 3)}...:`, error);
-  }
-}
-
-async function cleanupDatabase() {
-  console.debug("🧹 Iniciando limpieza de base de datos...");
-  return new Promise((resolve, reject) => {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 2);
-    const cutoffTimestamp = cutoffDate.toISOString();
-
-    db.run(
-      `DELETE FROM scraped_data WHERE insertion_time < DATETIME(?)`,
-      [cutoffTimestamp],
-      function (err) {
-        if (err) {
-          console.error("❌ Error al limpiar la base de datos:", err.message);
-          reject(err);
-        } else {
-          console.debug(
-            `✅ Limpieza de base de datos completada. Registros eliminados: ${this.changes}`,
-          );
-          resolve(this.changes);
-        }
-      },
-    );
-  });
-}
-
-async function procesarNoticia(newsItem, empresa, subscription) {
-  try {
-    const exists = await checkIfExists(newsItem.news, subscription.email);
-    if (!exists) {
-      await saveToDatabase(empresa.nombre, newsItem, subscription.email);
-      return { ...newsItem, company: empresa.nombre };
-    } else {
-      console.debug(
-        `Noticia ya registrada para ${subscription.email.slice(0, 3)}: ${newsItem.news}`,
-      );
-      return null;
-    }
-  } catch (error) {
-    console.error("Error procesando noticia:", error);
-    return null;
-  }
-}
-
-async function ejecutarTarea() {
-  console.time();
-  console.debug("⏳ Iniciando scraping...");
-  for (const subscription of subscriptions) {
     console.debug(
-      `\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`,
+      `📧 Correo enviado a ${recipient.slice(0, 3)}... con ${newsItems.length} noticias.`,
     );
-    let newNews = [];
-
-    await limitConcurrency(subscription.companies, 5, async (companyName) => {
-      const empresa = empresas.find((e) => e.nombre === companyName);
-      if (!empresa) {
-        console.warn(
-          `La empresa ${companyName} no se encontró en la configuración.`,
-        );
-        return;
-      }
-      console.debug(`🔍 Scrapeando: ${empresa.nombre}`);
-      const scrapedNews = await scrapeWebsite(empresa.url);
-      if (scrapedNews && scrapedNews.length > 0) {
-        for (const newsItem of scrapedNews) {
-          const processedNews = await procesarNoticia(
-            newsItem,
-            empresa,
-            subscription,
-          );
-          if (processedNews) {
-            newNews.push(processedNews);
-          }
-        }
-      } else {
-        if (empresa) {
-          console.debug(
-            `No se encontraron noticias o hubo un error al scrapear ${empresa.nombre}.`,
-          );
-        }
-      }
-    });
-
-    if (newNews.length > 0) {
-      await sendEmail(subscription.email, newNews);
-    } else {
-      console.debug(
-        `No hay noticias nuevas para enviar a ${subscription.email.slice(0, 3)}...`,
-      );
-    }
+  } catch (error) {
+    console.error(`❌ Error enviando email a ${recipient.slice(0, 3)}:`, error);
   }
-  console.debug("✅ Scraping completado.");
-  console.timeEnd();
 }
 
+// Control de concurrencia
 async function limitConcurrency(items, limit, asyncFn) {
   const results = [];
   const executing = [];
@@ -461,25 +301,71 @@ async function limitConcurrency(items, limit, asyncFn) {
   return Promise.all(results);
 }
 
-// CONFIGURACIÓN DEL SERVIDOR WEB PARA RAILWAY SERVERLESS
+// Función principal
+async function ejecutarTarea() {
+  console.time("Tiempo de ejecucion");
+  console.debug("⏳ Iniciando scraping...");
+
+  for (const subscription of subscriptions) {
+    console.debug(
+      `\nProcesando suscripción para: ${subscription.email.slice(0, 3)}...`,
+    );
+    let newNews = [];
+
+    await limitConcurrency(subscription.companies, 5, async (companyName) => {
+      const empresa = empresas.find((e) => e.nombre === companyName);
+      if (!empresa) return;
+
+      console.debug(`🔍 Scrapeando: ${empresa.nombre}`);
+
+      try {
+        const scrapedNews = await scrapeWebsite(empresa.url);
+
+        if (scrapedNews && scrapedNews.length > 0) {
+          for (const newsItem of scrapedNews) {
+            const processedNews = await procesarNoticia(
+              newsItem,
+              empresa,
+              subscription,
+            );
+            if (processedNews) newNews.push(processedNews);
+          }
+        } else {
+          console.debug(
+            `ℹ️ No se encontraron noticias recientes para ${empresa.nombre}.`,
+          );
+        }
+      } catch (error) {
+        console.error(
+          `❌ Bloqueo o Error al scrapear ${empresa.nombre}: ${error.message}`,
+        );
+      }
+    });
+
+    if (newNews.length > 0) {
+      await sendEmail(subscription.email, newNews);
+    } else {
+      console.debug(
+        `Sin noticias nuevas a enviar para ${subscription.email.slice(0, 3)}...`,
+      );
+    }
+  }
+  console.debug("✅ Scraping completado.");
+  console.timeEnd("Tiempo de ejecucion");
+}
+
+// --- SERVIDOR WEB ---
 const PORT = process.env.PORT || 8080;
 
 const server = http.createServer(async (req, res) => {
-  // Si visitas la URL normal, solo te dice que está vivo
   if (req.url === "/") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("✅ El bot de noticias está funcionando correctamente.");
-  }
-  // Esta es la ruta mágica. Si visitas /ejecutar, el bot busca las noticias
-  else if (req.url === "/ejecutar") {
+    res.end("✅ El bot está funcionando correctamente.");
+  } else if (req.url === "/ejecutar") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("🚀 Iniciando scraping de noticias de bolsa en segundo plano...");
+    res.end("🚀 Iniciando scraping en segundo plano...");
 
-    // Ejecutamos las tareas
     await ejecutarTarea();
-
-    // Limpiamos la base de datos de vez en cuando (ejecución sin esperar)
-    cleanupDatabase().catch((err) => console.error(err));
   } else {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Ruta no encontrada");
@@ -488,6 +374,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.debug(`🌐 Servidor web escuchando en el puerto ${PORT}`);
-  // Ejecutamos la tarea una vez al arrancar para comprobar que va bien
   ejecutarTarea();
 });
